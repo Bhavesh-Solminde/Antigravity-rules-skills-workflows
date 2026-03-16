@@ -1,0 +1,50 @@
+{
+    "name": "hackathon",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "server": "node --no-warnings=specifier-resolution --loader ts-node/esm server.ts"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "axios": "^1.13.6",
+        "body-parser": "^2.2.2",
+        "cors": "^2.8.6",
+        "date-fns": "^4.1.0",
+        "express": "^5.2.1",
+        "lucide-react": "^0.577.0",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
+        "react-hot-toast": "^2.6.0",
+        "socket.io": "^4.8.3",
+        "socket.io-client": "^4.8.3",
+        "ts-node": "^10.9.2",
+        "uuid": "^13.0.0",
+        "zustand": "^5.0.12"
+    },
+    "devDependencies": {
+        "@tailwindcss/postcss": "^4.2.1",
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.6",
+        "@types/node": "^25.5.0",
+        "@types/react": "^19.2.14",
+        "@types/react-dom": "^19.2.3",
+        "@types/socket.io-client": "^1.4.36",
+        "@types/uuid": "^10.0.0",
+        "@vitejs/plugin-react": "^6.0.1",
+        "autoprefixer": "^10.4.27",
+        "postcss": "^8.5.8",
+        "tailwindcss": "^4.2.1",
+        "ts-node-dev": "^2.0.0",
+        "typescript": "^5.9.3",
+        "vite": "^8.0.0"
+    },
+    "type": "module"
+}

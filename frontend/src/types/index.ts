@@ -2,6 +2,7 @@ export interface WebhookEvent {
   _id: string;
   id: string;
   source: string;
+  eventType?: string;
   method: string;
   url: string;
   headers: Record<string, string>;
@@ -25,6 +26,7 @@ export interface ApiRequest {
   timestamp: string;
   failed: boolean;
   service: string;
+  source?: 'auto' | 'manual';
 }
 
 export type EventType = "webhook" | "api_request";

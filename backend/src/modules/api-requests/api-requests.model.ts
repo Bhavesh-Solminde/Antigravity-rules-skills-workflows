@@ -12,6 +12,7 @@ export interface IApiRequest {
   timestamp: Date;
   failed: boolean;
   service: string;
+  source: 'auto' | 'manual';
 }
 
 export interface IApiRequestDocument extends Omit<Document, 'id'>, IApiRequest {}
@@ -29,6 +30,7 @@ const apiRequestSchema = new Schema<IApiRequestDocument>(
     timestamp: { type: Date, required: true, default: Date.now },
     failed: { type: Boolean, required: true, default: false },
     service: { type: String, required: true },
+    source: { type: String, enum: ['auto', 'manual'], required: true, default: 'manual' },
   },
   {
     timestamps: true,

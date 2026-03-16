@@ -16,4 +16,5 @@ export const ENV = {
   MONGO_URI: getEnv('MONGO_URI'),
   FRONTEND_ORIGIN: getEnv('FRONTEND_ORIGIN'),
   BACKEND_TARGET_URL: getEnv('BACKEND_TARGET_URL'),
+  GEMINI_API_KEY: getEnv('GEMINI_API_KEY', false),
 } as const;

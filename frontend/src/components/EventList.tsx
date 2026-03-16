@@ -15,7 +15,7 @@ export function EventList({ type, events, selectedId, onSelect, loading }: Event
     return (
       <div className="flex flex-col gap-3 p-4">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-28 bg-zinc-900/50 animate-pulse rounded-lg border border-zinc-800/50" />
+          <div key={i} className="h-28 bg-slate-100 dark:bg-white/5 animate-pulse rounded-md border border-slate-200 dark:border-white/5" />
         ))}
       </div>
     );
@@ -23,23 +23,20 @@ export function EventList({ type, events, selectedId, onSelect, loading }: Event
 
   if (events.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-zinc-950/20">
-        <div className="relative mb-6">
-          <Activity className="w-8 h-8 text-zinc-700 mx-auto" />
-          <div className="absolute -bottom-2 -right-2 w-4 h-4 border-2 border-zinc-800 border-t-emerald-500 rounded-full animate-spin"></div>
-        </div>
-        <h3 className="text-zinc-400 font-medium mb-2 font-mono text-sm tracking-wide lowercase">Waiting for traffic</h3>
-        <p className="text-zinc-600 text-xs max-w-[200px]">
-          {type === 'webhook' 
-            ? "Incoming webhooks will appear here instantly." 
-            : "Dispatched API proxy requests will be logged here."}
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+        <Activity className="w-10 h-10 text-slate-400 dark:text-slate-600 mb-4" />
+        <h3 className="text-sm font-medium text-slate-500 mb-1">Waiting for traffic</h3>
+        <p className="text-xs text-slate-400 dark:text-slate-600 max-w-[220px]">
+          {type === 'webhook'
+            ? 'Incoming webhooks will appear here instantly.'
+            : 'Dispatched API proxy requests will be logged here.'}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto w-full max-w-full [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+    <div className="flex flex-col h-full overflow-y-auto w-full max-w-full custom-scrollbar">
       {events.map((event) => (
         <EventCard
           key={event._id}

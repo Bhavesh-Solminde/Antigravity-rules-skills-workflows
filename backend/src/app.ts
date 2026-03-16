@@ -5,6 +5,7 @@ import { errorMiddleware } from './shared/errorMiddleware';
 import webhookRoutes from './modules/webhooks/webhooks.routes';
 import apiRequestRoutes from './modules/api-requests/api-requests.routes';
 import aiDebugRoutes from './modules/ai-debug/ai-debug.routes';
+import codeReviewRoutes from './modules/code-review/code-review.routes';
 
 const app: Application = express();
 
@@ -33,6 +34,7 @@ app.get('/health', (_req: Request, res: Response) => {
 app.use('/api', webhookRoutes);
 app.use('/api', apiRequestRoutes);
 app.use('/api', aiDebugRoutes);
+app.use('/api', codeReviewRoutes);
 
 // Global error handler (must be last)
 app.use(errorMiddleware);

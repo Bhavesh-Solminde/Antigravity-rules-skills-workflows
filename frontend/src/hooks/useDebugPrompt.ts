@@ -1,16 +1,18 @@
 import { useUiStore } from '../store/uiStore';
-import type { EventType } from '../types';
+import type { EventType, WebhookEvent, ApiRequest } from '../types';
 
 export const useDebugPrompt = () => {
-  const debugPrompt = useUiStore((state) => state.debugPrompt);
-  const debugPromptLoading = useUiStore((state) => state.debugPromptLoading);
-  const generateDebugPrompt = useUiStore((state) => state.generateDebugPrompt);
-  const clearDebugPrompt = useUiStore((state) => state.clearDebugPrompt);
+  const debugEvent = useUiStore((state) => state.debugEvent);
+  const debugEventType = useUiStore((state) => state.debugEventType);
+  const openDebugModal = useUiStore((state) => state.openDebugModal);
+  const closeDebugModal = useUiStore((state) => state.closeDebugModal);
 
   return {
-    prompt: debugPrompt,
-    loading: debugPromptLoading,
-    generate: (type: EventType, eventId: string) => generateDebugPrompt(type, eventId),
-    clear: clearDebugPrompt
+    event: debugEvent,
+    eventType: debugEventType,
+    isOpen: debugEvent !== null,
+    open: (type: EventType, event: WebhookEvent | ApiRequest) =>
+      openDebugModal(type, event),
+    close: closeDebugModal,
   };
 };

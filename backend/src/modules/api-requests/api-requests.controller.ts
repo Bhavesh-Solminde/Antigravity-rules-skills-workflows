@@ -7,12 +7,14 @@ import { parseSource } from '../../shared/parseSource';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { ApiResponse } from '../../shared/utils/ApiResponse';
 import { ApiError } from '../../shared/utils/ApiError';
+import { setSkipInterception } from '../../middleware/proxyInterceptor';
 
 interface ProxyRequestBody {
   method: string;
   endpoint: string;
   headers?: Record<string, string>;
   payload?: Record<string, unknown> | string;
+  source?: 'auto' | 'manual';
 }
 
 /**
@@ -28,10 +30,10 @@ export const proxyApiRequest = asyncHandler(
       throw new ApiError(400, 'method and endpoint are required');
     }
 
-    const service = parseSource(endpoint);
+    const { source: service } = parseSource(endpoint, headers, payload);
     const startTime = Date.now();
 
-    let responseStatus = 502;
+    let responseStatus = 503;
     let responseBody: Record<string, unknown> | string = {};
     let responseTime = 0;
 
@@ -44,14 +46,17 @@ export const proxyApiRequest = asyncHandler(
         validateStatus: () => true,
       };
 
+      setSkipInterception(true);
       const externalResponse = await axios(axiosConfig);
+      setSkipInterception(false);
       responseStatus = externalResponse.status;
       responseTime = Date.now() - startTime;
       responseBody = externalResponse.data as Record<string, unknown> | string;
     } catch (error) {
+      setSkipInterception(false);
       responseTime = Date.now() - startTime;
       if (error instanceof AxiosError) {
-        responseStatus = error.response?.status ?? 502;
+        responseStatus = error.response?.status ?? 503;
         responseBody = (error.response?.data as Record<string, unknown> | string) ?? { error: error.message };
       } else if (error instanceof Error) {
         responseBody = { error: error.message };
@@ -70,6 +75,7 @@ export const proxyApiRequest = asyncHandler(
       timestamp: new Date(),
       failed: responseStatus >= 400,
       service,
+      source: (req.body as ProxyRequestBody).source || 'manual',
     };
 
     const savedRequest = await new ApiRequest(apiRequestDoc).save();
@@ -150,7 +156,7 @@ export const replayApiRequest = asyncHandler(
     }
 
     const startTime = Date.now();
-    let responseStatus = 502;
+    let responseStatus = 503;
     let responseBody: Record<string, unknown> | string = {};
     let responseTime = 0;
 
@@ -163,14 +169,17 @@ export const replayApiRequest = asyncHandler(
         validateStatus: () => true,
       };
 
+      setSkipInterception(true);
       const externalResponse = await axios(axiosConfig);
+      setSkipInterception(false);
       responseStatus = externalResponse.status;
       responseTime = Date.now() - startTime;
       responseBody = externalResponse.data as Record<string, unknown> | string;
     } catch (error) {
+      setSkipInterception(false);
       responseTime = Date.now() - startTime;
       if (error instanceof AxiosError) {
-        responseStatus = error.response?.status ?? 502;
+        responseStatus = error.response?.status ?? 503;
         responseBody = (error.response?.data as Record<string, unknown> | string) ?? { error: error.message };
       } else if (error instanceof Error) {
         responseBody = { error: error.message };
@@ -189,6 +198,7 @@ export const replayApiRequest = asyncHandler(
       timestamp: new Date(),
       failed: responseStatus >= 400,
       service: original.service,
+      source: 'manual',
     };
 
     const savedRequest = await new ApiRequest(replayedRequest).save();

@@ -38,6 +38,10 @@ export const useWebhookStore = create<WebhookStore>((set, get) => ({
   selectWebhook: (event) => set({ selectedWebhook: event }),
 
   addWebhook: (event) => set((state) => {
+    // Deduplicate — skip if a webhook with this id already exists
+    if (state.webhooks.some((w) => w.id === event.id)) {
+      return state;
+    }
     const newWebhooks = [event, ...state.webhooks].slice(0, state.filters.limit);
     return { webhooks: newWebhooks };
   }),
@@ -54,8 +58,8 @@ export const useWebhookStore = create<WebhookStore>((set, get) => ({
     try {
       await axios.delete(`/api/webhooks/${id}`);
       set((state) => ({
-        webhooks: state.webhooks.filter((w) => w._id !== id),
-        selectedWebhook: state.selectedWebhook?._id === id ? null : state.selectedWebhook
+        webhooks: state.webhooks.filter((w) => w.id !== id),
+        selectedWebhook: state.selectedWebhook?.id === id ? null : state.selectedWebhook
       }));
       toast.success('Webhook deleted');
     } catch (error) {

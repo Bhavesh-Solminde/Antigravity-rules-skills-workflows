@@ -6,22 +6,15 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  let colorClass = 'bg-zinc-800 text-zinc-400 border-zinc-700';
-
-  if (status >= 200 && status < 300) {
-    colorClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-  } else if (status >= 300 && status < 400) {
-    colorClass = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-  } else if (status >= 400 && status < 500) {
-    colorClass = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-  } else if (status >= 500) {
-    colorClass = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-  }
+  const isError = status >= 400;
+  const colorClass = isError
+    ? 'text-rose-600 dark:text-rose-500 bg-rose-500/10 border-rose-500/20'
+    : 'text-emerald-600 dark:text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
 
   return (
     <span
       className={cn(
-        'inline-flex items-center justify-center px-2 py-0.5 rounded text-[11px] font-mono font-medium border',
+        'px-2.5 py-1 rounded-md text-[10px] font-mono font-bold border',
         colorClass,
         className
       )}

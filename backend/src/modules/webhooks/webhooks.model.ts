@@ -3,6 +3,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface IWebhookEvent {
   id: string;
   source: string;
+  eventType?: string;
   method: string;
   url: string;
   headers: Record<string, string>;
@@ -19,6 +20,7 @@ const webhookEventSchema = new Schema<IWebhookEventDocument>(
   {
     id: { type: String, required: true, unique: true },
     source: { type: String, required: true },
+    eventType: { type: String, default: 'Unknown Event' },
     method: { type: String, required: true },
     url: { type: String, required: true },
     headers: { type: Schema.Types.Mixed, required: true, default: {} },

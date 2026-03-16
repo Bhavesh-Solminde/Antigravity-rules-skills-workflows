@@ -16,12 +16,16 @@ import { ENV } from '../../env';
  */
 export const interceptWebhook = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const source = parseSource(req.params.source ?? req.originalUrl);
+    const { source, eventType } = parseSource(
+      req.params.source ?? req.originalUrl,
+      req.headers,
+      req.body
+    );
     const startTime = Date.now();
 
     const forwardUrl = `${ENV.BACKEND_TARGET_URL}${req.originalUrl}`;
 
-    let responseStatus = 502;
+    let responseStatus = 503;
     let responseTime = 0;
     let upstreamResponseData: unknown = null;
 
@@ -45,7 +49,7 @@ export const interceptWebhook = asyncHandler(
     } catch (error) {
       responseTime = Date.now() - startTime;
       if (error instanceof AxiosError) {
-        responseStatus = error.response?.status ?? 502;
+        responseStatus = error.response?.status ?? 503;
         upstreamResponseData = error.response?.data ?? { error: error.message };
       } else if (error instanceof Error) {
         upstreamResponseData = { error: error.message };
@@ -55,6 +59,7 @@ export const interceptWebhook = asyncHandler(
     const webhookEvent: IWebhookEvent = {
       id: uuidv4(),
       source,
+      eventType,
       method: req.method,
       url: req.originalUrl,
       headers: (req.headers ?? {}) as Record<string, string>,
@@ -137,7 +142,7 @@ export const replayWebhook = asyncHandler(
     const forwardUrl = `${ENV.BACKEND_TARGET_URL}${original.url}`;
     const startTime = Date.now();
 
-    let responseStatus = 502;
+    let responseStatus = 503;
     let responseTime = 0;
 
     try {
@@ -155,7 +160,7 @@ export const replayWebhook = asyncHandler(
     } catch (error) {
       responseTime = Date.now() - startTime;
       if (error instanceof AxiosError) {
-        responseStatus = error.response?.status ?? 502;
+        responseStatus = error.response?.status ?? 503;
       }
     }
 

@@ -46,6 +46,10 @@ export const useApiRequestStore = create<ApiRequestStore>((set, get) => ({
   selectRequest: (req) => set({ selectedRequest: req }),
 
   addApiRequest: (req) => set((state) => {
+    // Deduplicate — skip if a request with this id already exists
+    if (state.apiRequests.some((r) => r.id === req.id)) {
+      return state;
+    }
     const newRequests = [req, ...state.apiRequests].slice(0, state.filters.limit);
     return { apiRequests: newRequests };
   }),
@@ -56,6 +60,7 @@ export const useApiRequestStore = create<ApiRequestStore>((set, get) => ({
       await axios.post('/api/api-requests/proxy', data);
       toast.success('Proxy request dispatched');
     } catch (error) {
+      toast.error('Error dispatching request');
     } finally {
       set({ loading: false });
     }
@@ -66,6 +71,7 @@ export const useApiRequestStore = create<ApiRequestStore>((set, get) => ({
       await axios.post(`/api/api-requests/${id}/replay`);
       toast.success('API Request replayed successfully');
     } catch (error) {
+      toast.error('Error replaying request');
     }
   },
 
@@ -73,8 +79,8 @@ export const useApiRequestStore = create<ApiRequestStore>((set, get) => ({
     try {
       await axios.delete(`/api/api-requests/${id}`);
       set((state) => ({
-        apiRequests: state.apiRequests.filter((r) => r._id !== id),
-        selectedRequest: state.selectedRequest?._id === id ? null : state.selectedRequest
+        apiRequests: state.apiRequests.filter((r) => r.id !== id),
+        selectedRequest: state.selectedRequest?.id === id ? null : state.selectedRequest
       }));
       toast.success('API Request deleted');
     } catch (error) {
