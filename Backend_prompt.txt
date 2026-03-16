@@ -1,0 +1,305 @@
+Using the project context provided earlier, implement Phase 1: the complete backend.
+
+=======================================================================
+IMPORTANT CONCEPT — HOW DEVPROXY WORKS
+=======================================================================
+
+DevProxy sits as a MIDDLEWARE between payment providers and the 
+developer's own backend server.
+
+The flow is:
+
+  WEBHOOK FLOW:
+  Razorpay/Stripe → DevProxy Backend → (log + store + emit to UI) → Developer's Backend
+
+  API REQUEST FLOW:
+  Developer's Backend → DevProxy Backend → (log + store + emit to UI) → Razorpay/Stripe API
+
+BACKEND_TARGET_URL is the developer's OWN backend server.
+This is the final destination of every intercepted webhook.
+DevProxy intercepts the webhook, logs it, shows it in the UI,
+and then FORWARDS it to BACKEND_TARGET_URL so the developer's 
+app still works normally as if DevProxy was never in the middle.
+
+=======================================================================
+STEP 1 — INSTALL ADDITIONAL BACKEND DEPENDENCIES
+=======================================================================
+
+In backend/, run:
+
+  npm install socket.io http-proxy-middleware axios uuid
+  npm install --save-dev @types/uuid
+
+=======================================================================
+STEP 2 — BACKEND MODULES
+=======================================================================
+
+Inside backend/src/modules/, create the following feature modules.
+Each module follows this pattern:
+  modules/<name>/
+    ├── <name>.model.ts
+    ├── <name>.controller.ts
+    └── <name>.routes.ts
+
+---
+
+MODULE 1: webhooks  (backend/src/modules/webhooks/)
+
+--- webhooks.model.ts ---
+
+Mongoose model `WebhookEvent`:
+
+  interface IWebhookEvent {
+    id: string                  // uuid, unique identifier
+    source: string              // e.g. "razorpay", "stripe", "github"
+    method: string
+    url: string
+    headers: Record<string, string>
+    payload: Record<string, unknown> | string
+    status: number              // HTTP status returned by the DEVELOPER'S backend
+    responseTime: number        // ms — time taken by developer's backend to respond
+    timestamp: Date
+    failed: boolean             // true if developer's backend returned status >= 400
+  }
+
+Add timestamps: true. Add index on timestamp descending.
+
+--- webhooks.controller.ts ---
+
+  1. interceptWebhook(req, res):
+     - Capture method, url, headers, body from req
+       (this request is coming FROM Razorpay/Stripe)
+     - Parse source from URL (e.g. "/webhooks/razorpay" → "razorpay")
+     - Record start time
+     - FORWARD the request to BACKEND_TARGET_URL (the developer's own backend)
+       using axios — same method, same headers, same payload
+     - Record responseTime from developer's backend response
+     - Save full WebhookEvent to MongoDB (log the intercepted event)
+     - Emit "new_webhook" via Socket.io so the DevProxy UI updates live
+     - Respond to the ORIGINAL CALLER (Razorpay/Stripe) with whatever
+       the developer's backend responded — so Razorpay thinks it talked
+       directly to the developer's server
+     - Mark failed: true if developer's backend returned status >= 400
+
+  2. getAllWebhooks(req, res):
+     - Return all WebhookEvents sorted by timestamp descending
+     - Support ?source=razorpay&failed=true&limit=50
+
+  3. getWebhookById(req, res):
+     - Find one WebhookEvent by uuid `id` field
+
+  4. replayWebhook(req, res):
+     - Find event by id
+     - Re-POST the stored payload + headers to BACKEND_TARGET_URL
+       (the developer's backend) — exactly as the original webhook did
+     - Save a NEW WebhookEvent record with same data but new timestamp
+     - Emit "new_webhook" via socket so UI updates
+     - Return the new event to the DevProxy frontend
+
+  5. deleteWebhook(req, res):
+     - Delete event by id
+
+--- webhooks.routes.ts ---
+
+  POST   /webhooks/:source         → interceptWebhook
+  GET    /webhooks                 → getAllWebhooks
+  GET    /webhooks/:id             → getWebhookById
+  POST   /webhooks/:id/replay      → replayWebhook
+  DELETE /webhooks/:id             → deleteWebhook
+
+---
+
+MODULE 2: api-requests  (backend/src/modules/api-requests/)
+
+--- api-requests.model.ts ---
+
+Mongoose model `ApiRequest`:
+
+  interface IApiRequest {
+    id: string
+    method: string
+    endpoint: string              // the Razorpay/Stripe API URL being called
+                                  // e.g. "https://api.razorpay.com/v1/payments"
+    requestHeaders: Record<string, string>
+    requestPayload: Record<string, unknown> | string
+    responseStatus: number        // HTTP status returned by Razorpay/Stripe
+    responseBody: Record<string, unknown> | string
+    responseTime: number          // ms — time taken by Razorpay/Stripe to respond
+    timestamp: Date
+    failed: boolean               // true if Razorpay/Stripe returned status >= 400
+    service: string               // parsed from endpoint hostname e.g. "razorpay"
+  }
+
+Add timestamps: true and index on timestamp descending.
+
+--- api-requests.controller.ts ---
+
+  1. proxyApiRequest(req, res):
+     - Accept { method, endpoint, headers, payload } in req.body
+       (this request is coming FROM the developer's own backend or
+       from the DevProxy UI directly)
+     - Use axios to FORWARD the request to `endpoint`
+       (the actual Razorpay/Stripe API URL) with provided headers + payload
+     - Record responseTime from Razorpay/Stripe response
+     - Save ApiRequest document to MongoDB (log the intercepted request)
+     - Emit "new_api_request" via Socket.io so DevProxy UI updates live
+     - Return { request: savedDoc, response: { status, body } }
+       back to whoever called DevProxy (developer's backend or UI)
+     - Mark failed: true if Razorpay/Stripe returned status >= 400
+
+  2. getAllApiRequests(req, res):
+     - Return all sorted by timestamp descending
+     - Support ?service=razorpay&failed=true&limit=50
+
+  3. getApiRequestById(req, res):
+     - Return single ApiRequest by uuid id
+
+  4. replayApiRequest(req, res):
+     - Find by id
+     - Re-forward the original request to the same endpoint
+       (Razorpay/Stripe API) with the same headers and payload
+     - Save new record, emit socket event, return new record
+
+  5. deleteApiRequest(req, res):
+     - Delete by id
+
+--- api-requests.routes.ts ---
+
+  POST   /api-requests/proxy       → proxyApiRequest
+  GET    /api-requests             → getAllApiRequests
+  GET    /api-requests/:id         → getApiRequestById
+  POST   /api-requests/:id/replay  → replayApiRequest
+  DELETE /api-requests/:id         → deleteApiRequest
+
+---
+
+MODULE 3: ai-debug  (backend/src/modules/ai-debug/)
+
+--- ai-debug.controller.ts ---
+
+  1. generateDebugPrompt(req, res):
+     - Accept { type: "webhook" | "api_request", eventId: string } in req.body
+     - Fetch the event from the appropriate collection by eventId
+     - Build and return this exact structured prompt string:
+
+       ---
+       A [webhook/API] request failed.
+
+       [If webhook:]
+       Source: <source>
+       Method: <method>
+       URL: <url>
+       Note: This webhook was forwarded to the developer's backend at
+             BACKEND_TARGET_URL and that server returned a failure.
+
+       [If api-request:]
+       Endpoint: <endpoint>
+       Method: <method>
+       Service: <service>
+       Note: This API request was forwarded to the payment provider
+             and they returned a failure response.
+
+       Payload:
+       <JSON.stringify(payload, null, 2)>
+
+       Headers:
+       <sanitized headers — mask Authorization values as "Bearer ***">
+
+       Response Status: <status>
+       Response Body: <JSON.stringify(responseBody, null, 2)>
+       Response Time: <responseTime>ms
+
+       You are a Node.js backend expert. Identify the root cause of this failure
+       and suggest a precise fix with corrected code. Be specific about which field
+       or header is wrong and why.
+       ---
+
+     - Return { prompt: string }
+
+--- ai-debug.routes.ts ---
+
+  POST   /ai-debug/prompt   → generateDebugPrompt
+
+=======================================================================
+STEP 3 — SHARED UTILITIES  (backend/src/shared/)
+=======================================================================
+
+--- shared/socket.ts ---
+  - Singleton Socket.io server instance
+  - Export getIO(): returns io instance
+  - Export initSocket(server: HttpServer): attaches Socket.io with CORS
+    for frontend origin
+  - Events emitted:
+      "new_webhook"      — payload: WebhookEvent document
+      "new_api_request"  — payload: ApiRequest document
+
+--- shared/asyncHandler.ts ---
+  - Higher-order function wrapping async Express handlers,
+    passing errors to next()
+
+--- shared/errorMiddleware.ts ---
+  - Global Express error handler
+  - Format: { success: false, message: string, stack?: string (dev only) }
+
+--- shared/parseSource.ts ---
+  - parseSource(input: string): string
+  - "/webhooks/razorpay" → "razorpay"
+  - "https://api.razorpay.com/v1/payments" → "razorpay" (from hostname)
+  - Fallback: "unknown"
+
+=======================================================================
+STEP 4 — UPDATE app.ts, server.ts, env.ts, .env.example
+=======================================================================
+
+--- app.ts ---
+  - Mount routers under /api prefix:
+      app.use("/api", webhookRoutes)
+      app.use("/api", apiRequestRoutes)
+      app.use("/api", aiDebugRoutes)
+  - Add express.json() and express.urlencoded({ extended: true })
+  - Add cors() allowing FRONTEND_ORIGIN from env
+  - Keep existing GET /health → { status: "ok" }
+  - Mount errorMiddleware last
+
+--- server.ts ---
+  - Create http.Server from Express app
+  - Call initSocket(server) before server.listen()
+  - Connect MongoDB via MONGODB_URI
+  - Listen on PORT (default 5000)
+
+--- env.ts ---
+  Add and validate:
+    MONGODB_URI          (required)
+    PORT                 (default: "5000")
+    FRONTEND_ORIGIN      (required — DevProxy frontend URL)
+    BACKEND_TARGET_URL   (required — the DEVELOPER'S OWN backend server URL
+                          where intercepted webhooks will be forwarded to.
+                          e.g. http://localhost:3000 — the developer's app)
+
+--- .env.example ---
+  MONGODB_URI=mongodb://localhost:27017/api-debugger
+  PORT=5000
+  FRONTEND_ORIGIN=http://localhost:5173
+
+  # This is YOUR backend server — the app you are debugging.
+  # DevProxy will forward all intercepted webhooks to this URL.
+  # Point Razorpay/Stripe to DevProxy, and DevProxy forwards to here.
+  BACKEND_TARGET_URL=http://localhost:3000
+
+=======================================================================
+BACKEND VERIFICATION CHECKLIST
+=======================================================================
+
+[ ] TypeScript compiles with no errors (npx tsc --noEmit)
+[ ] MongoDB connection established on server start
+[ ] Socket.io emits on webhook intercept and proxy request
+[ ] POST /api/webhooks/:source captures, logs, AND forwards to
+    BACKEND_TARGET_URL (developer's backend)
+[ ] Developer's backend response is returned back to Razorpay/Stripe
+[ ] POST /api/api-requests/proxy forwards request to payment provider
+    and returns the response back to caller
+[ ] POST /api/ai-debug/prompt returns a valid prompt string
+[ ] GET /api/webhooks returns filtered, paginated results
+[ ] Replay re-forwards to BACKEND_TARGET_URL and saves new event
+[ ] All async handlers wrapped in asyncHandler()
+[ ] No `any` types used anywhere

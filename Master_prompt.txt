@@ -1,0 +1,635 @@
+You are a senior full-stack engineer. The MERN monorepo boilerplate has already been 
+scaffolded. The backend uses Node.js + Express + TypeScript + MongoDB + Mongoose. 
+The frontend uses Vite + React + TypeScript + TailwindCSS v4 + Zustand + Axios. 
+Socket.io is used for real-time updates.
+
+Your job is to implement a full "API & Webhook Debugger" tool — similar to Webhooksite 
+or Proxyman — but for developers debugging payment integrations (e.g. Razorpay, Stripe).
+
+=======================================================================
+EXISTING BOILERPLATE STRUCTURE (DO NOT RE-SCAFFOLD, BUILD ON TOP OF THIS)
+=======================================================================
+
+backend/
+├── src/
+│   ├── modules/          ← feature-based: controllers, models, routes go here
+│   ├── shared/           ← global middlewares, utilities, types
+│   ├── app.ts            ← Express app config (already has health-check route)
+│   ├── server.ts         ← Entry point: DB + server listener
+│   └── env.ts            ← Centralized env validation
+├── .env.example
+└── web.config
+
+frontend/
+└── src/
+    ├── assets/
+    ├── components/       ← reusable UI
+    ├── data/             ← static constants / mock data
+    ├── hooks/            ← custom React hooks
+    ├── layouts/          ← page wrappers
+    ├── lib/
+    │   └── axios.ts      ← Axios client instance (already created)
+    ├── pages/            ← route-level components
+    ├── store/            ← Zustand slices
+    ├── types/            ← global TypeScript interfaces
+    ├── App.tsx
+    ├── main.tsx
+    ├── index.css
+    └── App.css
+
+=======================================================================
+PHASE 1 — BACKEND: INSTALL ADDITIONAL DEPENDENCIES
+=======================================================================
+
+In backend/, install these additional packages on top of the existing ones:
+
+  npm install socket.io http-proxy-middleware axios uuid
+  npm install --save-dev @types/uuid
+
+=======================================================================
+PHASE 2 — BACKEND: MODULES STRUCTURE
+=======================================================================
+
+Inside backend/src/modules/, create the following feature modules.
+Each module must follow this pattern:
+  modules/<name>/
+    ├── <name>.model.ts       ← Mongoose schema + model
+    ├── <name>.controller.ts  ← request handlers
+    └── <name>.routes.ts      ← Express router
+
+---
+
+MODULE 1: webhooks  (backend/src/modules/webhooks/)
+
+--- webhooks.model.ts ---
+
+Create a Mongoose model called `WebhookEvent` with this schema:
+
+  interface IWebhookEvent {
+    id: string                  // uuid, unique identifier
+    source: string              // e.g. "razorpay", "stripe", "github" — parsed from URL
+    method: string              // HTTP method: GET, POST, etc.
+    url: string                 // full request URL
+    headers: Record<string, string>
+    payload: Record<string, unknown> | string
+    status: number              // HTTP status returned to the provider
+    responseTime: number        // in milliseconds
+    timestamp: Date             // auto set to Date.now()
+    failed: boolean             // true if status >= 400
+  }
+
+Add timestamps: true to the schema options.
+Add an index on `timestamp` descending for fast queries.
+
+--- webhooks.controller.ts ---
+
+Implement these controller functions:
+
+  1. interceptWebhook(req, res):
+     - Capture method, url, headers, body from req
+     - Parse source from URL (e.g. "/webhooks/razorpay" → "razorpay")
+     - Record start time, then forward request to BACKEND_TARGET_URL using axios
+     - Record responseTime
+     - Save full WebhookEvent to MongoDB
+     - Emit event via Socket.io: socket.emit("new_webhook", savedEvent)
+     - Respond to the original caller with the proxied response
+     - Mark failed: true if status >= 400
+
+  2. getAllWebhooks(req, res):
+     - Query all WebhookEvents sorted by timestamp descending
+     - Support optional query params: ?source=razorpay&failed=true&limit=50
+     - Return paginated JSON
+
+  3. getWebhookById(req, res):
+     - Find one WebhookEvent by its uuid `id` field
+     - Return full document including headers + payload
+
+  4. replayWebhook(req, res):
+     - Find event by id
+     - Re-POST the stored payload + headers to BACKEND_TARGET_URL
+     - Save a NEW WebhookEvent record with same data but new timestamp
+     - Emit "new_webhook" via socket
+     - Return the new event
+
+  5. deleteWebhook(req, res):
+     - Delete event by id
+
+--- webhooks.routes.ts ---
+
+  POST   /webhooks/:source         → interceptWebhook
+  GET    /webhooks                 → getAllWebhooks
+  GET    /webhooks/:id             → getWebhookById
+  POST   /webhooks/:id/replay      → replayWebhook
+  DELETE /webhooks/:id             → deleteWebhook
+
+---
+
+MODULE 2: api-requests  (backend/src/modules/api-requests/)
+
+--- api-requests.model.ts ---
+
+Create a Mongoose model called `ApiRequest` with this schema:
+
+  interface IApiRequest {
+    id: string                    // uuid
+    method: string
+    endpoint: string              // e.g. "https://api.razorpay.com/v1/payments"
+    requestHeaders: Record<string, string>
+    requestPayload: Record<string, unknown> | string
+    responseStatus: number
+    responseBody: Record<string, unknown> | string
+    responseTime: number          // ms
+    timestamp: Date
+    failed: boolean               // true if responseStatus >= 400
+    service: string               // parsed from endpoint hostname
+  }
+
+Add timestamps: true and index on timestamp descending.
+
+--- api-requests.controller.ts ---
+
+Implement these controller functions:
+
+  1. proxyApiRequest(req, res):
+     - Accept { method, endpoint, headers, payload } in req.body
+     - Use axios to forward the request to `endpoint` with provided headers + payload
+     - Record start/end time for responseTime
+     - Save ApiRequest document to MongoDB
+     - Emit "new_api_request" via Socket.io
+     - Return { request: savedDoc, response: { status, body } }
+     - Mark failed: true if status >= 400
+
+  2. getAllApiRequests(req, res):
+     - Return all ApiRequests sorted by timestamp descending
+     - Support ?service=razorpay&failed=true&limit=50
+
+  3. getApiRequestById(req, res):
+     - Return single ApiRequest by uuid id
+
+  4. replayApiRequest(req, res):
+     - Find by id, re-forward the original request through proxyApiRequest logic
+     - Save new record, emit socket event, return new record
+
+  5. deleteApiRequest(req, res):
+     - Delete by id
+
+--- api-requests.routes.ts ---
+
+  POST   /api-requests/proxy         → proxyApiRequest
+  GET    /api-requests               → getAllApiRequests
+  GET    /api-requests/:id           → getApiRequestById
+  POST   /api-requests/:id/replay    → replayApiRequest
+  DELETE /api-requests/:id           → deleteApiRequest
+
+---
+
+MODULE 3: ai-debug  (backend/src/modules/ai-debug/)
+
+--- ai-debug.controller.ts ---
+
+  1. generateDebugPrompt(req, res):
+     - Accept in req.body:
+         { type: "webhook" | "api_request", eventId: string }
+     - Fetch the event from the appropriate collection by eventId
+     - If type === "webhook", fetch from WebhookEvent
+     - If type === "api_request", fetch from ApiRequest
+     - Build and return a structured AI debugging prompt string in this exact format:
+
+       ---
+       A [webhook/API] request failed.
+
+       [If webhook:]
+       Source: <source>
+       Method: <method>
+       URL: <url>
+
+       [If api-request:]
+       Endpoint: <endpoint>
+       Method: <method>
+       Service: <service>
+
+       Payload:
+       <JSON.stringify(payload, null, 2)>
+
+       Headers:
+       <sanitized headers — mask Authorization values as "Bearer ***">
+
+       Response Status: <status>
+       Response Body: <JSON.stringify(responseBody, null, 2)>
+       Response Time: <responseTime>ms
+
+       You are a Node.js backend expert. Identify the root cause of this failure
+       and suggest a precise fix with corrected code. Be specific about which field
+       or header is wrong and why.
+       ---
+
+     - Return { prompt: string }
+
+--- ai-debug.routes.ts ---
+
+  POST   /ai-debug/prompt   → generateDebugPrompt
+
+=======================================================================
+PHASE 3 — BACKEND: SHARED UTILITIES
+=======================================================================
+
+In backend/src/shared/, create:
+
+--- shared/socket.ts ---
+
+  - Create and export a singleton Socket.io server instance
+  - Export a function `getIO()` that returns the io instance
+  - Export a function `initSocket(server: HttpServer)` that attaches Socket.io to
+    the HTTP server with CORS allowing frontend origin
+  - Socket.io events to emit (used in controllers):
+      "new_webhook"       — payload: WebhookEvent document
+      "new_api_request"   — payload: ApiRequest document
+
+--- shared/asyncHandler.ts ---
+
+  - Export a higher-order function `asyncHandler(fn)` that wraps async Express
+    route handlers and passes errors to next()
+
+--- shared/errorMiddleware.ts ---
+
+  - Export a global Express error handler middleware
+  - Format: { success: false, message: string, stack?: string (dev only) }
+
+--- shared/parseSource.ts ---
+
+  - Export a function `parseSource(input: string): string`
+  - If input is a URL path like "/webhooks/razorpay" → return "razorpay"
+  - If input is a full URL like "https://api.razorpay.com/v1/payments"
+    → extract hostname → return "razorpay"
+  - Fallback: return "unknown"
+
+=======================================================================
+PHASE 4 — BACKEND: UPDATE app.ts AND server.ts
+=======================================================================
+
+--- app.ts (update existing file) ---
+
+  - Import and mount all module routers under /api prefix:
+      app.use("/api", webhookRoutes)
+      app.use("/api", apiRequestRoutes)
+      app.use("/api", aiDebugRoutes)
+  - Add express.json() and express.urlencoded({ extended: true }) middleware
+  - Add cors() middleware, allow frontend origin from env
+  - Keep existing health-check route: GET /health → { status: "ok" }
+  - Mount global errorMiddleware last
+
+--- server.ts (update existing file) ---
+
+  - Create an http.Server from the Express app
+  - Call initSocket(server) before server.listen()
+  - Connect to MongoDB using MONGODB_URI from env
+  - Listen on PORT from env (default 5000)
+
+--- env.ts (update existing file) ---
+
+  Add and validate these env variables:
+    MONGODB_URI          (required)
+    PORT                 (default: "5000")
+    FRONTEND_ORIGIN      (required, e.g. http://localhost:5173)
+    BACKEND_TARGET_URL   (required, e.g. http://localhost:5000 — where webhooks are forwarded)
+
+--- .env.example (update) ---
+
+  MONGODB_URI=mongodb://localhost:27017/api-debugger
+  PORT=5000
+  FRONTEND_ORIGIN=http://localhost:5173
+  BACKEND_TARGET_URL=http://localhost:5000
+
+=======================================================================
+PHASE 5 — FRONTEND: INSTALL ADDITIONAL DEPENDENCIES
+=======================================================================
+
+In frontend/, install:
+
+  npm install socket.io-client date-fns react-hot-toast lucide-react
+
+=======================================================================
+PHASE 6 — FRONTEND: TYPES
+=======================================================================
+
+In frontend/src/types/, create:
+
+--- types/index.ts ---
+
+  export interface WebhookEvent {
+    _id: string
+    id: string
+    source: string
+    method: string
+    url: string
+    headers: Record<string, string>
+    payload: Record<string, unknown> | string
+    status: number
+    responseTime: number
+    timestamp: string
+    failed: boolean
+  }
+
+  export interface ApiRequest {
+    _id: string
+    id: string
+    method: string
+    endpoint: string
+    requestHeaders: Record<string, string>
+    requestPayload: Record<string, unknown> | string
+    responseStatus: number
+    responseBody: Record<string, unknown> | string
+    responseTime: number
+    timestamp: string
+    failed: boolean
+    service: string
+  }
+
+  export type EventType = "webhook" | "api_request"
+
+  export interface DebugPromptResponse {
+    prompt: string
+  }
+
+  export interface FilterState {
+    source?: string
+    failed?: boolean
+    limit: number
+  }
+
+=======================================================================
+PHASE 7 — FRONTEND: ZUSTAND STORE
+=======================================================================
+
+In frontend/src/store/, create:
+
+--- store/webhookStore.ts ---
+
+  State:
+    webhooks: WebhookEvent[]
+    selectedWebhook: WebhookEvent | null
+    loading: boolean
+    filters: FilterState
+
+  Actions:
+    fetchWebhooks(filters?)     → GET /api/webhooks
+    selectWebhook(event)        → set selectedWebhook
+    addWebhook(event)           → prepend to webhooks array (called from socket)
+    replayWebhook(id)           → POST /api/webhooks/:id/replay
+    deleteWebhook(id)           → DELETE /api/webhooks/:id
+    clearSelected()             → set selectedWebhook to null
+    setFilters(filters)         → update filter state + re-fetch
+
+--- store/apiRequestStore.ts ---
+
+  State:
+    apiRequests: ApiRequest[]
+    selectedRequest: ApiRequest | null
+    loading: boolean
+    filters: FilterState
+
+  Actions:
+    fetchApiRequests(filters?)  → GET /api/api-requests
+    selectRequest(req)          → set selectedRequest
+    addApiRequest(req)          → prepend (from socket)
+    sendProxyRequest(data)      → POST /api/api-requests/proxy
+    replayApiRequest(id)        → POST /api/api-requests/:id/replay
+    deleteApiRequest(id)        → DELETE /api-requests/:id
+    clearSelected()
+    setFilters(filters)
+
+--- store/uiStore.ts ---
+
+  State:
+    activeTab: "webhooks" | "api-requests"
+    sidebarOpen: boolean
+    debugPrompt: string | null
+    debugPromptLoading: boolean
+
+  Actions:
+    setActiveTab(tab)
+    toggleSidebar()
+    generateDebugPrompt(type, eventId) → POST /api/ai-debug/prompt → set debugPrompt
+    clearDebugPrompt()
+
+=======================================================================
+PHASE 8 — FRONTEND: HOOKS
+=======================================================================
+
+In frontend/src/hooks/, create:
+
+--- hooks/useSocket.ts ---
+
+  - Connect to backend using socket.io-client on VITE_API_BASE_URL
+  - On "new_webhook" event → call webhookStore.addWebhook(event) + toast.success
+  - On "new_api_request" event → call apiRequestStore.addApiRequest(event) + toast
+  - Handle connect/disconnect lifecycle
+  - Return { connected: boolean }
+
+--- hooks/useDebugPrompt.ts ---
+
+  - Wrap uiStore.generateDebugPrompt
+  - Return { prompt, loading, generate(type, eventId), clear }
+
+=======================================================================
+PHASE 9 — FRONTEND: COMPONENTS
+=======================================================================
+
+In frontend/src/components/, create these components.
+Use TailwindCSS v4 for all styling. Use lucide-react for all icons.
+Design must look like a professional developer tool (dark theme default).
+Color palette: dark gray backgrounds (#0f0f0f, #1a1a1a, #242424),
+green for success (#22c55e), red for failed (#ef4444), 
+blue accent (#3b82f6), muted gray text (#9ca3af).
+
+---
+
+components/StatusBadge.tsx
+  Props: { status: number }
+  - If status < 400: green badge with "● status"
+  - If status >= 400 and < 500: orange badge
+  - If status >= 500: red badge
+  - Pill shape, monospace font
+
+components/MethodBadge.tsx
+  Props: { method: string }
+  - Color-coded: GET=blue, POST=green, PUT=yellow, DELETE=red, PATCH=purple
+  - Uppercase, bold, small pill
+
+components/TimestampDisplay.tsx
+  Props: { timestamp: string }
+  - Use date-fns to format: "Mar 14, 2025 · 14:32:05"
+  - Show relative time on hover (e.g. "2 minutes ago")
+
+components/JsonViewer.tsx
+  Props: { data: Record<string, unknown> | string; label?: string }
+  - Render a collapsible, syntax-highlighted JSON block
+  - Dark background, monospace font, line numbers
+  - Copy to clipboard button in top-right corner
+
+components/EventCard.tsx
+  Props: { event: WebhookEvent | ApiRequest; type: EventType; onClick: () => void }
+  - Compact card showing: method badge, source/service, status badge, timestamp, 
+    response time in ms
+  - Red left border if failed: true
+  - Hover highlight
+  - Animated entrance (fade in from bottom, 150ms)
+
+components/EventList.tsx
+  Props: { type: EventType }
+  - Renders a scrollable list of EventCards
+  - Pulls from webhookStore or apiRequestStore depending on type
+  - Shows empty state: "No events captured yet. Waiting for incoming traffic..."
+    with an animated pulsing dot
+  - Shows loading skeleton (3 placeholder cards) while loading: true
+
+components/EventDetailPanel.tsx
+  Props: { event: WebhookEvent | ApiRequest | null; type: EventType }
+  - Renders selected event detail in a right-side panel
+  - Sections:
+      1. Overview: method, url/endpoint, status, responseTime, timestamp, source
+      2. Request Headers (JsonViewer)
+      3. Request Payload (JsonViewer)
+      4. Response Body (JsonViewer, only for ApiRequest)
+      5. Action Buttons:
+           [Replay]              → calls replayWebhook or replayApiRequest
+           [Generate AI Prompt]  → calls generateDebugPrompt
+           [Delete]              → calls delete action
+  - Shows "Select an event to inspect" placeholder when event is null
+
+components/DebugPromptModal.tsx
+  - Reads debugPrompt from uiStore
+  - Full-screen modal overlay
+  - Shows the generated prompt in a <pre> code block
+  - [Copy Prompt] button → copies to clipboard → shows "Copied!" toast
+  - [Close] button → calls clearDebugPrompt()
+  - Keyboard shortcut: Escape closes modal
+
+components/ProxyRequestForm.tsx
+  - Form to manually send a proxied API request
+  - Fields:
+      Method selector: GET | POST | PUT | PATCH | DELETE
+      Endpoint URL: text input (placeholder: https://api.razorpay.com/v1/payments)
+      Headers: key-value pair editor (add/remove rows)
+      Payload: textarea with JSON validation
+  - [Send Request] button → calls apiRequestStore.sendProxyRequest(data)
+  - Show inline error if JSON payload is invalid
+  - Show loading spinner on submit
+
+components/FilterBar.tsx
+  Props: { type: EventType }
+  - Source/service filter: text input
+  - Failed only toggle: checkbox/switch
+  - Limit selector: 25 | 50 | 100
+  - [Clear Filters] button
+  - Calls setFilters on change
+
+components/ConnectionStatus.tsx
+  - Reads connected from useSocket hook
+  - Shows "● Live" in green when connected
+  - Shows "○ Disconnected" in red when not
+  - Fixed position in navbar
+
+components/Navbar.tsx
+  - App name: "DevProxy" with a terminal/bug icon
+  - Tab switcher: [Webhooks] [API Requests]
+  - ConnectionStatus component on right
+  - Calls uiStore.setActiveTab on tab click
+
+components/StatsSummary.tsx
+  Props: { type: EventType }
+  - Shows 4 stat cards in a row:
+      Total Events | Failed Events | Avg Response Time | Last Event Time
+  - Computed from store data
+  - Numbers animate on change
+
+=======================================================================
+PHASE 10 — FRONTEND: PAGES & LAYOUTS
+=======================================================================
+
+--- layouts/DashboardLayout.tsx ---
+
+  - Full viewport height layout
+  - Navbar at top (fixed, 64px)
+  - Main content below navbar
+  - Split view: EventList (left, 380px fixed) + EventDetailPanel (right, fills rest)
+  - Toaster from react-hot-toast at root level
+  - DebugPromptModal rendered here (conditionally if debugPrompt !== null)
+
+--- pages/DashboardPage.tsx ---
+
+  - Reads activeTab from uiStore
+  - Renders inside DashboardLayout
+  - Top section: StatsSummary + FilterBar
+  - If activeTab === "webhooks":
+      EventList type="webhook" + EventDetailPanel with selectedWebhook
+  - If activeTab === "api-requests":
+      ProxyRequestForm at top + EventList type="api_request" + EventDetailPanel
+  - On mount: call useSocket() to initialize real-time connection
+
+--- pages/NotFoundPage.tsx ---
+
+  - Simple 404 page with "Page Not Found" message and a back-to-dashboard link
+
+=======================================================================
+PHASE 11 — FRONTEND: ROUTING AND APP SETUP
+=======================================================================
+
+--- App.tsx ---
+
+  - Use react-router-dom BrowserRouter
+  - Routes:
+      /         → DashboardPage
+      *         → NotFoundPage
+  - Wrap with <Toaster position="bottom-right" /> from react-hot-toast
+
+--- lib/axios.ts (update existing file) ---
+
+  - Base URL from import.meta.env.VITE_API_BASE_URL
+  - Default headers: { "Content-Type": "application/json" }
+  - Add a response interceptor:
+      On error response → extract message from error.response.data.message
+      → show toast.error(message)
+
+--- frontend/.env.example ---
+
+  VITE_API_BASE_URL=http://localhost:5000
+
+=======================================================================
+PHASE 12 — FINAL CHECKLIST
+=======================================================================
+
+After implementing everything, verify:
+
+[ ] Backend TypeScript compiles with no errors (npx tsc --noEmit)
+[ ] MongoDB connection is established on server start
+[ ] Socket.io emits events on webhook intercept and proxy request
+[ ] POST /api/webhooks/:source captures and stores event
+[ ] POST /api/api-requests/proxy forwards and stores request
+[ ] POST /api/ai-debug/prompt returns a valid prompt string
+[ ] GET /api/webhooks returns paginated results
+[ ] Replay endpoint saves a new event and emits socket event
+[ ] Frontend Zustand stores update correctly from socket events
+[ ] EventList renders cards with correct status colors
+[ ] EventDetailPanel shows all sections with working copy buttons
+[ ] DebugPromptModal opens/closes correctly with Escape key
+[ ] ProxyRequestForm validates JSON and shows errors
+[ ] FilterBar updates store filters and re-fetches
+[ ] ConnectionStatus shows live/disconnected correctly
+[ ] All TypeScript interfaces match between frontend and backend
+[ ] No console errors in browser on load
+
+=======================================================================
+IMPORTANT IMPLEMENTATION RULES
+=======================================================================
+
+1. NEVER use `any` type anywhere — use `unknown` and narrow properly
+2. ALL async route handlers must be wrapped in asyncHandler()
+3. ALL controllers must use try/catch or asyncHandler — no unhandled rejections
+4. ALL Mongoose queries must be typed with the interface generic
+5. Socket.io instance must ONLY be initialized once (singleton via shared/socket.ts)
+6. Frontend components must NEVER call axios directly — always through Zustand actions
+7. JSON payloads in the UI must always be safely parsed with try/catch before display
+8. Authorization header values must ALWAYS be masked in the AI debug prompt
+9. All dates must be formatted using date-fns — never use raw Date.toLocaleString()
+10. TailwindCSS v4 only — do not use v3 syntax or @apply in component files

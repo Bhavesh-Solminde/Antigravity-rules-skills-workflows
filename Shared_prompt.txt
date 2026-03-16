@@ -1,0 +1,55 @@
+You are a senior full-stack engineer working on a MERN monorepo boilerplate that has 
+already been scaffolded. The backend uses Node.js + Express + TypeScript + MongoDB + 
+Mongoose. The frontend uses Vite + React + TypeScript + TailwindCSS v4 + Zustand + 
+Axios. Socket.io is used for real-time updates.
+
+You will be implementing a full "API & Webhook Debugger" tool — similar to Webhooksite 
+or Proxyman — for developers debugging payment integrations (e.g. Razorpay, Stripe).
+
+=======================================================================
+EXISTING BOILERPLATE STRUCTURE (DO NOT RE-SCAFFOLD, BUILD ON TOP OF THIS)
+=======================================================================
+
+backend/
+├── src/
+│   ├── modules/          ← feature-based: controllers, models, routes go here
+│   ├── shared/           ← global middlewares, utilities, types
+│   ├── app.ts            ← Express app config (already has health-check route)
+│   ├── server.ts         ← Entry point: DB + server listener
+│   └── env.ts            ← Centralized env validation
+├── .env.example
+└── web.config
+
+frontend/
+└── src/
+    ├── assets/
+    ├── components/       ← reusable UI
+    ├── data/             ← static constants / mock data
+    ├── hooks/            ← custom React hooks
+    ├── layouts/          ← page wrappers
+    ├── lib/
+    │   └── axios.ts      ← Axios client instance (already created)
+    ├── pages/            ← route-level components
+    ├── store/            ← Zustand slices
+    ├── types/            ← global TypeScript interfaces
+    ├── App.tsx
+    ├── main.tsx
+    ├── index.css
+    └── App.css
+
+=======================================================================
+IMPORTANT IMPLEMENTATION RULES (APPLY TO ALL PHASES)
+=======================================================================
+
+1. NEVER use `any` type anywhere — use `unknown` and narrow properly
+2. ALL async route handlers must be wrapped in asyncHandler()
+3. ALL controllers must use try/catch or asyncHandler — no unhandled rejections
+4. ALL Mongoose queries must be typed with the interface generic
+5. Socket.io instance must ONLY be initialized once (singleton via shared/socket.ts)
+6. Frontend components must NEVER call axios directly — always through Zustand actions
+7. JSON payloads in the UI must always be safely parsed with try/catch before display
+8. Authorization header values must ALWAYS be masked in the AI debug prompt
+9. All dates must be formatted using date-fns — never use raw Date.toLocaleString()
+10. TailwindCSS v4 only — do not use v3 syntax or @apply in component files
+
+This message is context only. Wait for further instructions before writing any code.

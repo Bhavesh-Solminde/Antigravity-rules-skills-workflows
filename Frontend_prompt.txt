@@ -1,0 +1,207 @@
+Using the project context provided earlier, and assuming the backend from Phase 1 is 
+complete, implement Phase 2: the complete frontend.
+
+Before writing any code, read and follow the design skill at:
+.agents/skills/frontend/SKILL.md
+
+Apply it to create a distinctive, production-grade developer tool UI.
+
+=======================================================================
+STEP 1 — INSTALL ADDITIONAL FRONTEND DEPENDENCIES
+=======================================================================
+
+In frontend/, run:
+
+  npm install socket.io-client date-fns react-hot-toast lucide-react
+
+=======================================================================
+STEP 2 — TYPES  (frontend/src/types/index.ts)
+=======================================================================
+
+  export interface WebhookEvent {
+    _id: string; id: string; source: string; method: string; url: string
+    headers: Record<string, string>; payload: Record<string, unknown> | string
+    status: number; responseTime: number; timestamp: string; failed: boolean
+  }
+
+  export interface ApiRequest {
+    _id: string; id: string; method: string; endpoint: string
+    requestHeaders: Record<string, string>
+    requestPayload: Record<string, unknown> | string
+    responseStatus: number; responseBody: Record<string, unknown> | string
+    responseTime: number; timestamp: string; failed: boolean; service: string
+  }
+
+  export type EventType = "webhook" | "api_request"
+  export interface DebugPromptResponse { prompt: string }
+  export interface FilterState { source?: string; failed?: boolean; limit: number }
+
+=======================================================================
+STEP 3 — ZUSTAND STORES
+=======================================================================
+
+--- store/webhookStore.ts ---
+  State: webhooks, selectedWebhook, loading, filters
+  Actions:
+    fetchWebhooks(filters?)     → GET /api/webhooks
+    selectWebhook(event)
+    addWebhook(event)           → prepend to array (called from socket)
+    replayWebhook(id)           → POST /api/webhooks/:id/replay
+    deleteWebhook(id)           → DELETE /api/webhooks/:id
+    clearSelected()
+    setFilters(filters)         → update filters + re-fetch
+
+--- store/apiRequestStore.ts ---
+  State: apiRequests, selectedRequest, loading, filters
+  Actions:
+    fetchApiRequests(filters?)  → GET /api/api-requests
+    selectRequest(req)
+    addApiRequest(req)          → prepend (from socket)
+    sendProxyRequest(data)      → POST /api/api-requests/proxy
+    replayApiRequest(id)        → POST /api/api-requests/:id/replay
+    deleteApiRequest(id)        → DELETE /api/api-requests/:id
+    clearSelected()
+    setFilters(filters)
+
+--- store/uiStore.ts ---
+  State: activeTab, sidebarOpen, debugPrompt, debugPromptLoading
+  Actions:
+    setActiveTab(tab)
+    toggleSidebar()
+    generateDebugPrompt(type, eventId) → POST /api/ai-debug/prompt → set debugPrompt
+    clearDebugPrompt()
+
+=======================================================================
+STEP 4 — HOOKS
+=======================================================================
+
+--- hooks/useSocket.ts ---
+  - Connect via socket.io-client to VITE_API_BASE_URL
+  - "new_webhook" → webhookStore.addWebhook(event) + toast.success
+  - "new_api_request" → apiRequestStore.addApiRequest(event) + toast
+  - Handle connect/disconnect lifecycle
+  - Return { connected: boolean }
+
+--- hooks/useDebugPrompt.ts ---
+  - Wrap uiStore.generateDebugPrompt
+  - Return { prompt, loading, generate(type, eventId), clear }
+
+=======================================================================
+STEP 5 — COMPONENTS
+=======================================================================
+
+Use lucide-react for all icons. TailwindCSS v4 only.
+
+Key UI behaviors to implement (design the look yourself using the skill):
+
+  StatusBadge.tsx { status: number }
+    - Must be a pill/badge shape
+    - Visually distinct between success (2xx), client error (4xx), server error (5xx)
+
+  MethodBadge.tsx { method: string }
+    - Must be a pill/badge shape
+    - Each HTTP method (GET/POST/PUT/PATCH/DELETE) must be visually distinct
+
+  ConnectionStatus.tsx
+    - MUST show a live animated pulsing dot when socket is connected
+    - MUST show a clearly different disconnected state
+    - Fixed position in navbar
+
+  TimestampDisplay.tsx { timestamp: string }
+    - Use date-fns for formatting
+    - Show relative time on hover (e.g. "2 minutes ago")
+
+  JsonViewer.tsx { data: Record<string, unknown> | string; label?: string }
+    - Collapsible JSON block, monospace font
+    - Copy to clipboard button
+
+  EventCard.tsx { event: WebhookEvent | ApiRequest; type: EventType; onClick }
+    - Compact card: method badge, source/service, status badge, timestamp, responseTime
+    - Must have a visually prominent indicator for failed events
+    - Animated entrance on appear
+
+  EventList.tsx { type: EventType }
+    - Scrollable list of EventCards
+    - Empty state: "No events captured yet. Waiting for incoming traffic..."
+      with an animated indicator
+    - Loading skeleton while loading: true
+
+  EventDetailPanel.tsx { event: WebhookEvent | ApiRequest | null; type: EventType }
+    - Sections: Overview, Request Headers, Payload, Response Body (ApiRequest only)
+    - Action buttons: [Replay] [Generate AI Prompt] [Delete]
+    - Placeholder when event is null
+
+  DebugPromptModal.tsx
+    - Full-screen overlay with generated prompt in a code block
+    - [Copy Prompt] button + [Close] button
+    - Escape key closes modal
+
+  ProxyRequestForm.tsx
+    - Fields: Method selector, Endpoint URL, Headers key-value editor, Payload textarea
+    - JSON validation on payload with inline error
+    - Loading state on submit
+
+  FilterBar.tsx { type: EventType }
+    - Source filter input, failed-only toggle, limit selector (25/50/100)
+    - [Clear Filters] button
+
+  Navbar.tsx
+    - App name "DevProxy" with icon
+    - Tab switcher: [Webhooks] [API Requests]
+    - ConnectionStatus on right
+
+  StatsSummary.tsx { type: EventType }
+    - 4 stat cards: Total | Failed | Avg Response Time | Last Event Time
+    - Numbers animate on change
+
+=======================================================================
+STEP 6 — PAGES & LAYOUTS
+=======================================================================
+
+--- layouts/DashboardLayout.tsx ---
+  - Navbar fixed at top
+  - Split view: EventList (left, fixed width) + EventDetailPanel (right, fills rest)
+  - react-hot-toast Toaster at root
+  - DebugPromptModal rendered conditionally when debugPrompt !== null
+
+--- pages/DashboardPage.tsx ---
+  - Reads activeTab from uiStore
+  - Top section: StatsSummary + FilterBar
+  - "webhooks": EventList + EventDetailPanel for selectedWebhook
+  - "api-requests": ProxyRequestForm + EventList + EventDetailPanel
+  - On mount: call useSocket()
+
+--- pages/NotFoundPage.tsx ---
+  - 404 with back-to-dashboard link
+
+=======================================================================
+STEP 7 — ROUTING & APP SETUP
+=======================================================================
+
+--- App.tsx ---
+  - react-router-dom BrowserRouter
+  - Routes: / → DashboardPage | * → NotFoundPage
+  - <Toaster position="bottom-right" />
+
+--- lib/axios.ts (update existing) ---
+  - Base URL: import.meta.env.VITE_API_BASE_URL
+  - Default headers: { "Content-Type": "application/json" }
+  - Response interceptor: on error → toast.error(error.response.data.message)
+
+--- frontend/.env.example ---
+  VITE_API_BASE_URL=http://localhost:5000
+
+=======================================================================
+FRONTEND VERIFICATION CHECKLIST
+=======================================================================
+
+[ ] Zustand stores update correctly from socket events
+[ ] StatusBadge and MethodBadge are visually distinct per value
+[ ] Live pulsing dot shows when socket is connected
+[ ] EventDetailPanel shows all sections with working copy buttons
+[ ] DebugPromptModal opens/closes with Escape key
+[ ] ProxyRequestForm validates JSON and shows inline errors
+[ ] FilterBar updates store and re-fetches
+[ ] All TypeScript interfaces match backend
+[ ] No console errors on load
+[ ] No `any` types used anywhere

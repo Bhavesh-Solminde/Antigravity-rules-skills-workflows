@@ -1,0 +1,5 @@
+# modules directory - feature-based architecture
+# Add feature folders here, e.g.:
+# modules/auth/auth.controller.ts
+# modules/auth/auth.routes.ts
+# modules/auth/auth.model.ts
